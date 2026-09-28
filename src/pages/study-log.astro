@@ -1,0 +1,8 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import { StudyLogView } from '../components/study-log/StudyLogView';
+---
+
+<AppLayout title="Study Log - StudyOS">
+  <StudyLogView client:only="react" />
+</AppLayout>

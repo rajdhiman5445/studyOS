@@ -1,0 +1,8 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import { RevisionView } from '../components/revision/RevisionView';
+---
+
+<AppLayout title="Revision & Mastery - StudyOS">
+  <RevisionView client:only="react" />
+</AppLayout>

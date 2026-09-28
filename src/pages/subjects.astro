@@ -1,0 +1,8 @@
+---
+import AppLayout from '../layouts/AppLayout.astro';
+import { SubjectsView } from '../components/subjects/SubjectsView';
+---
+
+<AppLayout title="Subjects & Academic Structure - StudyOS">
+  <SubjectsView client:only="react" />
+</AppLayout>

@@ -1,0 +1,53 @@
+---
+import '../styles/global.css';
+import { Navigation } from '../components/layout/Navigation';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { 
+  title = 'StudyOS - Academic Workspace', 
+  description = 'Personal study management system for Robotics Engineering M2' 
+} = Astro.props;
+
+const currentPath = Astro.url.pathname;
+const isDev = import.meta.env.DEV;
+---
+
+<!doctype html>
+<html lang="en" class="dark" style="background-color: #121212; color: #F0F0F0; color-scheme: dark;">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <!-- Critical theme styling to eliminate white/unstyled flash before stylesheet loads -->
+    <style>
+      :root, html, body {
+        background-color: #121212 !important;
+        color: #F0F0F0 !important;
+        color-scheme: dark !important;
+      }
+    </style>
+    {isDev && (
+      <script is:inline>
+        window.$RefreshReg$ = () => {};
+        window.$RefreshSig$ = () => (type) => type;
+        window.__vite_plugin_react_preamble_installed__ = true;
+      </script>
+    )}
+  </head>
+  <body class="bg-[#121212] text-[#F0F0F0] min-h-screen flex flex-col lg:flex-row antialiased selection:bg-[#2A2A2A] selection:text-white" style="background-color: #121212; color: #F0F0F0;">
+    <!-- Responsive Navigation Island -->
+    <Navigation currentPath={currentPath} client:load />
+
+    <!-- Main Content Area with generous breathing room -->
+    <main class="flex-1 min-w-0 px-4 py-6 sm:px-8 sm:py-8 lg:px-12 lg:py-12 max-w-[1480px] w-full mx-auto">
+      <slot />
+    </main>
+  </body>
+</html>
