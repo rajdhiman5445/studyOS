@@ -23,6 +23,7 @@ import {
   statusConfig 
 } from '../../lib/utils';
 import { SubjectBadge } from '../common/SubjectBadge';
+import { AuthGuard } from '../auth/AuthGuard';
 import type { Task, TaskStatus, Priority } from '../../types';
 
 export const TasksView: React.FC = () => {
@@ -111,7 +112,7 @@ export const TasksView: React.FC = () => {
       });
     } else {
       const newTask: Task = {
-        id: `task-${Date.now()}`,
+        id: crypto.randomUUID(),
         semesterId: activeSemester.id,
         subjectId: formSubjectId || (activeSubjects[0]?.id ?? ''),
         title: formTitle.trim(),
@@ -132,7 +133,7 @@ export const TasksView: React.FC = () => {
     if (!newSubtaskInput.trim()) return;
     setFormSubtasks((prev) => [
       ...prev,
-      { id: `sub-${Date.now()}`, title: newSubtaskInput.trim(), completed: false },
+      { id: crypto.randomUUID(), title: newSubtaskInput.trim(), completed: false },
     ]);
     setNewSubtaskInput('');
   };
@@ -162,7 +163,8 @@ export const TasksView: React.FC = () => {
   });
 
   return (
-    <div className="space-y-8">
+    <AuthGuard>
+      <div className="space-y-8">
       <Header
         title="Tasks"
         subtitle="Manage academic coursework, algorithms, and derivation milestones"
@@ -561,5 +563,6 @@ export const TasksView: React.FC = () => {
         </div>
       )}
     </div>
-  );
+  </AuthGuard>
+);
 };

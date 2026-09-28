@@ -1,226 +1,496 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { StudyOSData, Task, Subject, Semester, Topic, StudySession, QuickNote } from '../types';
-import { initialMockData } from '../data/mockData';
+import { supabase, isSupabaseConfigured } from './supabase';
+import {
+  fromDbSemester,
+  toDbSemester,
+  fromDbSubject,
+  toDbSubject,
+  fromDbTopic,
+  toDbTopic,
+  fromDbTask,
+  toDbTask,
+  fromDbSession,
+  toDbSession,
+  fromDbQuickNote,
+  toDbQuickNote,
+  type DbSemester,
+  type DbSubject,
+  type DbTopic,
+  type DbTask,
+  type DbStudySession,
+  type DbQuickNote,
+} from './supabaseMappers';
 
-const STORAGE_KEY = 'studyos_data_v1';
+export function ensureUuid(id?: string): string {
+  if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return id;
+  }
+  return crypto.randomUUID();
+}
+
 const UPDATE_EVENT = 'studyos_data_updated';
 
-export function getStoredData(): StudyOSData {
-  if (typeof window === 'undefined') {
-    return initialMockData;
-  }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initialMockData));
-      return initialMockData;
-    }
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed to parse StudyOS local storage data, using defaults', err);
-    return initialMockData;
-  }
-}
+const emptyData: StudyOSData = {
+  semesters: [],
+  subjects: [],
+  topics: [],
+  tasks: [],
+  studySessions: [],
+  quickNotes: [],
+  dailyStudyGoalMinutes: 240,
+};
 
-export function saveStoredData(data: StudyOSData): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    window.dispatchEvent(new CustomEvent(UPDATE_EVENT, { detail: data }));
-  } catch (err) {
-    console.error('Failed to save StudyOS data to localStorage', err);
-  }
-}
-
-export function resetToDefaults(): StudyOSData {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initialMockData));
-    window.dispatchEvent(new CustomEvent(UPDATE_EVENT, { detail: initialMockData }));
-  }
-  return initialMockData;
-}
+// Global in-memory cache for cross-island sync
+let cachedData: StudyOSData = emptyData;
+let hasLoadedFromRemote = false;
 
 export function useStudyOS() {
-  const [data, setData] = useState<StudyOSData>(() => getStoredData());
-  const isReady = true;
+  const [data, setData] = useState<StudyOSData>(cachedData);
+  const [isReady, setIsReady] = useState(hasLoadedFromRemote);
+  const [isLoading, setIsLoading] = useState(!hasLoadedFromRemote);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // If SSR rendered fallback, synchronize with client localStorage
+  // Broadcast state changes across all Astro React islands
+  const broadcastData = (newData: StudyOSData) => {
+    cachedData = newData;
+    setData(newData);
     if (typeof window !== 'undefined') {
-      const stored = getStoredData();
-      setData(stored);
+      window.dispatchEvent(new CustomEvent(UPDATE_EVENT, { detail: newData }));
+    }
+  };
+
+  // Fetch all user data from Supabase
+  const loadRemoteData = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      setIsReady(true);
+      setIsLoading(false);
+      return;
     }
 
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setIsReady(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // Fetch all tables in parallel
+      const [
+        profileRes,
+        semestersRes,
+        subjectsRes,
+        topicsRes,
+        tasksRes,
+        sessionsRes,
+        notesRes,
+      ] = await Promise.all([
+        supabase.from('user_profiles').select('daily_study_goal_minutes').eq('id', user.id).maybeSingle(),
+        supabase.from('semesters').select('*').order('start_date', { ascending: false }),
+        supabase.from('subjects').select('*').order('name', { ascending: true }),
+        supabase.from('topics').select('*').order('title', { ascending: true }),
+        supabase.from('tasks').select('*').order('due_date', { ascending: true }),
+        supabase.from('study_sessions').select('*').order('date', { ascending: false }),
+        supabase.from('quick_notes').select('*').order('created_at', { ascending: false }),
+      ]);
+
+      if (profileRes.error) console.error('Error fetching profile:', profileRes.error);
+      if (semestersRes.error) console.error('Error fetching semesters:', semestersRes.error);
+      if (subjectsRes.error) console.error('Error fetching subjects:', subjectsRes.error);
+      if (topicsRes.error) console.error('Error fetching topics:', topicsRes.error);
+      if (tasksRes.error) console.error('Error fetching tasks:', tasksRes.error);
+      if (sessionsRes.error) console.error('Error fetching study sessions:', sessionsRes.error);
+      if (notesRes.error) console.error('Error fetching quick notes:', notesRes.error);
+
+      // Auto-provision profile if missing
+      let dailyGoal = profileRes.data?.daily_study_goal_minutes || 240;
+      if (!profileRes.data) {
+        await supabase.from('user_profiles').upsert({ id: user.id, daily_study_goal_minutes: 240 });
+      }
+
+      const freshData: StudyOSData = {
+        semesters: ((semestersRes.data as DbSemester[]) || []).map(fromDbSemester),
+        subjects: ((subjectsRes.data as DbSubject[]) || []).map(fromDbSubject),
+        topics: ((topicsRes.data as DbTopic[]) || []).map(fromDbTopic),
+        tasks: ((tasksRes.data as DbTask[]) || []).map(fromDbTask),
+        studySessions: ((sessionsRes.data as DbStudySession[]) || []).map(fromDbSession),
+        quickNotes: ((notesRes.data as DbQuickNote[]) || []).map(fromDbQuickNote),
+        dailyStudyGoalMinutes: dailyGoal,
+      };
+
+      hasLoadedFromRemote = true;
+      broadcastData(freshData);
+      setIsReady(true);
+    } catch (err: any) {
+      console.error('Failed to load StudyOS data from Supabase:', err);
+      setError(err.message || 'Failed to connect to Supabase');
+      setIsReady(true);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial load
+    if (!hasLoadedFromRemote) {
+      loadRemoteData();
+    }
+
+    // Listen for auth state changes to reload or clear data
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        loadRemoteData();
+      } else if (event === 'SIGNED_OUT') {
+        hasLoadedFromRemote = false;
+        broadcastData(emptyData);
+        setIsReady(true);
+      }
+    });
+
+    // Cross-island communication
     const handleUpdate = (e: Event) => {
       const customEvent = e as CustomEvent<StudyOSData>;
       if (customEvent.detail) {
         setData(customEvent.detail);
-      } else {
-        setData(getStoredData());
       }
     };
 
     window.addEventListener(UPDATE_EVENT, handleUpdate);
-    window.addEventListener('storage', handleUpdate);
 
     return () => {
+      subscription.unsubscribe();
       window.removeEventListener(UPDATE_EVENT, handleUpdate);
-      window.removeEventListener('storage', handleUpdate);
     };
-  }, []);
+  }, [loadRemoteData]);
 
-  const updateData = useCallback((updater: (prev: StudyOSData) => StudyOSData) => {
-    setData((prev) => {
-      const next = updater(prev);
-      if (typeof window !== 'undefined') {
-        queueMicrotask(() => {
-          saveStoredData(next);
-        });
-      }
-      return next;
-    });
-  }, []);
-
-  // Helpers
+  // Derived state
   const activeSemester = data.semesters.find((s) => s.isActive && !s.isArchived) || data.semesters[0];
 
   const activeSubjects = data.subjects.filter(
     (s) => s.semesterId === activeSemester?.id && !s.isArchived
   );
 
-  const setActiveSemesterId = useCallback((semesterId: string) => {
-    updateData((prev) => ({
-      ...prev,
-      semesters: prev.semesters.map((sem) => ({
-        ...sem,
-        isActive: sem.id === semesterId,
-      })),
-    }));
-  }, [updateData]);
+  // Helper for optimistic mutations + Supabase persistence
+  const getUserId = async (): Promise<string | null> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user ? user.id : null;
+  };
 
-  const addTask = useCallback((task: Task) => {
-    updateData((prev) => ({
-      ...prev,
-      tasks: [task, ...prev.tasks],
-    }));
-  }, [updateData]);
+  // --- Mutators ---
 
-  const updateTask = useCallback((updatedTask: Task) => {
-    updateData((prev) => ({
-      ...prev,
-      tasks: prev.tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)),
+  const setActiveSemesterId = useCallback(async (semesterId: string) => {
+    const nextSemesters = data.semesters.map((s) => ({
+      ...s,
+      isActive: s.id === semesterId,
     }));
-  }, [updateData]);
+    broadcastData({ ...data, semesters: nextSemesters });
 
-  const deleteTask = useCallback((taskId: string) => {
-    updateData((prev) => ({
-      ...prev,
-      tasks: prev.tasks.filter((t) => t.id !== taskId),
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
 
-  const toggleTaskCompleted = useCallback((taskId: string) => {
-    updateData((prev) => ({
-      ...prev,
-      tasks: prev.tasks.map((t) => {
-        if (t.id !== taskId) return t;
-        const newStatus = t.status === 'completed' ? 'todo' : 'completed';
-        return {
-          ...t,
-          status: newStatus,
-          completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-        };
-      }),
-    }));
-  }, [updateData]);
+      // Update in Supabase
+      await Promise.all([
+        supabase.from('semesters').update({ is_active: false }).eq('user_id', userId),
+        supabase.from('semesters').update({ is_active: true }).eq('id', semesterId).eq('user_id', userId),
+      ]);
+    } catch (err: any) {
+      console.error('Failed to set active semester:', err);
+      setError(err.message);
+    }
+  }, [data]);
 
-  const rescheduleTask = useCallback((taskId: string, newDate: string) => {
-    updateData((prev) => ({
-      ...prev,
-      tasks: prev.tasks.map((t) => (t.id === taskId ? { ...t, scheduledDate: newDate, dueDate: newDate } : t)),
-    }));
-  }, [updateData]);
+  const addSemester = useCallback(async (semester: Semester) => {
+    const semWithUuid = { ...semester, id: ensureUuid(semester.id) };
+    broadcastData({
+      ...data,
+      semesters: [semWithUuid, ...data.semesters],
+    });
 
-  const addSubject = useCallback((subject: Subject) => {
-    updateData((prev) => ({
-      ...prev,
-      subjects: [...prev.subjects, subject],
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('semesters').insert(toDbSemester(semWithUuid, userId));
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to add semester:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
 
-  const updateSubject = useCallback((updatedSubject: Subject) => {
-    updateData((prev) => ({
-      ...prev,
-      subjects: prev.subjects.map((s) => (s.id === updatedSubject.id ? updatedSubject : s)),
-    }));
-  }, [updateData]);
+  const updateSemester = useCallback(async (updated: Semester) => {
+    broadcastData({
+      ...data,
+      semesters: data.semesters.map((s) => (s.id === updated.id ? updated : s)),
+    });
 
-  const addSemester = useCallback((semester: Semester) => {
-    updateData((prev) => ({
-      ...prev,
-      semesters: [...prev.semesters, semester],
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('semesters').update(toDbSemester(updated, userId)).eq('id', updated.id);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to update semester:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
 
-  const updateSemester = useCallback((updatedSemester: Semester) => {
-    updateData((prev) => ({
-      ...prev,
-      semesters: prev.semesters.map((s) => (s.id === updatedSemester.id ? updatedSemester : s)),
-    }));
-  }, [updateData]);
+  const addSubject = useCallback(async (subject: Subject) => {
+    const subWithUuid = { ...subject, id: ensureUuid(subject.id) };
+    broadcastData({
+      ...data,
+      subjects: [...data.subjects, subWithUuid],
+    });
 
-  const addTopic = useCallback((topic: Topic) => {
-    updateData((prev) => ({
-      ...prev,
-      topics: [...prev.topics, topic],
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('subjects').insert(toDbSubject(subWithUuid, userId));
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to add subject:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
 
-  const updateTopic = useCallback((updatedTopic: Topic) => {
-    updateData((prev) => ({
-      ...prev,
-      topics: prev.topics.map((top) => (top.id === updatedTopic.id ? updatedTopic : top)),
-    }));
-  }, [updateData]);
+  const updateSubject = useCallback(async (updated: Subject) => {
+    broadcastData({
+      ...data,
+      subjects: data.subjects.map((s) => (s.id === updated.id ? updated : s)),
+    });
 
-  const addStudySession = useCallback((session: StudySession) => {
-    updateData((prev) => ({
-      ...prev,
-      studySessions: [session, ...prev.studySessions],
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('subjects').update(toDbSubject(updated, userId)).eq('id', updated.id);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to update subject:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
 
-  const updateStudySession = useCallback((updatedSession: StudySession) => {
-    updateData((prev) => ({
-      ...prev,
-      studySessions: prev.studySessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)),
-    }));
-  }, [updateData]);
+  const addTopic = useCallback(async (topic: Topic) => {
+    const topicWithUuid = { ...topic, id: ensureUuid(topic.id) };
+    broadcastData({
+      ...data,
+      topics: [...data.topics, topicWithUuid],
+    });
 
-  const deleteStudySession = useCallback((sessionId: string) => {
-    updateData((prev) => ({
-      ...prev,
-      studySessions: prev.studySessions.filter((s) => s.id !== sessionId),
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('topics').insert(toDbTopic(topicWithUuid, userId));
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to add topic:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
 
-  const updateDailyGoal = useCallback((minutes: number) => {
-    updateData((prev) => ({
-      ...prev,
+  const updateTopic = useCallback(async (updated: Topic) => {
+    broadcastData({
+      ...data,
+      topics: data.topics.map((t) => (t.id === updated.id ? updated : t)),
+    });
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('topics').update(toDbTopic(updated, userId)).eq('id', updated.id);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to update topic:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const addTask = useCallback(async (task: Task) => {
+    const taskWithUuid = { ...task, id: ensureUuid(task.id) };
+    broadcastData({
+      ...data,
+      tasks: [taskWithUuid, ...data.tasks],
+    });
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('tasks').insert(toDbTask(taskWithUuid, userId));
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to add task:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const updateTask = useCallback(async (updated: Task) => {
+    broadcastData({
+      ...data,
+      tasks: data.tasks.map((t) => (t.id === updated.id ? updated : t)),
+    });
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('tasks').update(toDbTask(updated, userId)).eq('id', updated.id);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to update task:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const deleteTask = useCallback(async (taskId: string) => {
+    broadcastData({
+      ...data,
+      tasks: data.tasks.filter((t) => t.id !== taskId),
+    });
+
+    try {
+      const { error: err } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to delete task:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const toggleTaskCompleted = useCallback(async (taskId: string) => {
+    const target = data.tasks.find((t) => t.id === taskId);
+    if (!target) return;
+
+    const newStatus = target.status === 'completed' ? 'todo' : 'completed';
+    const completedAt = newStatus === 'completed' ? new Date().toISOString() : undefined;
+
+    const updatedTask: Task = {
+      ...target,
+      status: newStatus,
+      completedAt,
+    };
+
+    updateTask(updatedTask);
+  }, [data.tasks, updateTask]);
+
+  const rescheduleTask = useCallback(async (taskId: string, newDate: string) => {
+    const target = data.tasks.find((t) => t.id === taskId);
+    if (!target) return;
+
+    const updatedTask: Task = {
+      ...target,
+      scheduledDate: newDate,
+      dueDate: newDate,
+    };
+
+    updateTask(updatedTask);
+  }, [data.tasks, updateTask]);
+
+  const addStudySession = useCallback(async (session: StudySession) => {
+    const sessionWithUuid = { ...session, id: ensureUuid(session.id) };
+    broadcastData({
+      ...data,
+      studySessions: [sessionWithUuid, ...data.studySessions],
+    });
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('study_sessions').insert(toDbSession(sessionWithUuid, userId));
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to add study session:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const updateStudySession = useCallback(async (updated: StudySession) => {
+    broadcastData({
+      ...data,
+      studySessions: data.studySessions.map((s) => (s.id === updated.id ? updated : s)),
+    });
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('study_sessions').update(toDbSession(updated, userId)).eq('id', updated.id);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to update study session:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const deleteStudySession = useCallback(async (sessionId: string) => {
+    broadcastData({
+      ...data,
+      studySessions: data.studySessions.filter((s) => s.id !== sessionId),
+    });
+
+    try {
+      const { error: err } = await supabase.from('study_sessions').delete().eq('id', sessionId);
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to delete study session:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
+
+  const updateDailyGoal = useCallback(async (minutes: number) => {
+    broadcastData({
+      ...data,
       dailyStudyGoalMinutes: minutes,
-    }));
-  }, [updateData]);
+    });
 
-  const addQuickNote = useCallback((note: QuickNote) => {
-    updateData((prev) => ({
-      ...prev,
-      quickNotes: [note, ...prev.quickNotes],
-    }));
-  }, [updateData]);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('user_profiles').upsert({ id: userId, daily_study_goal_minutes: minutes });
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to update daily goal:', err);
+      setError(err.message);
+    }
+  }, [data]);
+
+  const addQuickNote = useCallback(async (note: QuickNote) => {
+    const noteWithUuid = { ...note, id: ensureUuid(note.id) };
+    broadcastData({
+      ...data,
+      quickNotes: [noteWithUuid, ...data.quickNotes],
+    });
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+      const { error: err } = await supabase.from('quick_notes').insert(toDbQuickNote(noteWithUuid, userId));
+      if (err) throw err;
+    } catch (err: any) {
+      console.error('Failed to add quick note:', err);
+      setError(err.message);
+      loadRemoteData();
+    }
+  }, [data, loadRemoteData]);
 
   return {
     data,
     isReady,
+    isLoading,
+    error,
     activeSemester,
     activeSubjects,
     setActiveSemesterId,
@@ -240,6 +510,6 @@ export function useStudyOS() {
     deleteStudySession,
     updateDailyGoal,
     addQuickNote,
-    resetToDefaults,
+    refreshData: loadRemoteData,
   };
 }

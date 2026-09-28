@@ -9,9 +9,10 @@ import {
   Menu, 
   X, 
   GraduationCap,
-  RotateCcw
+  LogOut
 } from 'lucide-react';
 import { useStudyOS } from '../../lib/storage';
+import { useAuth } from '../../lib/auth';
 
 interface NavigationProps {
   currentPath: string;
@@ -28,13 +29,8 @@ const navItems = [
 
 export const Navigation: React.FC<NavigationProps> = ({ currentPath, onOpenQuickCapture }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { activeSemester, resetToDefaults } = useStudyOS();
-
-  const handleReset = () => {
-    if (confirm('Reset all data to default mock state?')) {
-      resetToDefaults();
-    }
-  };
+  const { activeSemester } = useStudyOS();
+  const { user, signOut } = useAuth();
 
   return (
     <>
@@ -97,13 +93,17 @@ export const Navigation: React.FC<NavigationProps> = ({ currentPath, onOpenQuick
             );
           })}
           <div className="pt-4 mt-3 border-t border-[#242424] flex items-center justify-between text-xs text-[#707070]">
-            <span>Local Academic Workspace</span>
-            <button
-              onClick={handleReset}
-              className="text-[#707070] hover:text-[#A3A3A3] flex items-center gap-1.5"
-            >
-              <RotateCcw className="w-3.5 h-3.5" /> Reset Data
-            </button>
+            <span className="truncate max-w-[200px] font-mono text-[11px] text-[#A3A3A3]">
+              {user?.email || 'StudyOS Private'}
+            </span>
+            {user && (
+              <button
+                onClick={() => signOut()}
+                className="text-[#707070] hover:text-[#E06C75] flex items-center gap-1.5 font-mono text-xs transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5" /> Sign Out
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -176,16 +176,22 @@ export const Navigation: React.FC<NavigationProps> = ({ currentPath, onOpenQuick
           </div>
         )}
 
-        {/* Footer info & Reset */}
+        {/* Footer info & Logout */}
         <div className="p-4 border-t border-[#242424] bg-[#141414] text-xs text-[#707070] flex items-center justify-between">
-          <span className="font-mono text-[11px]">Robotics M2</span>
-          <button
-            onClick={handleReset}
-            title="Reset to default mock data"
-            className="hover:text-[#A3A3A3] text-[#707070] p-1.5 rounded hover:bg-[#202020] transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
+          <div className="min-w-0 pr-2">
+            <span className="font-mono text-[11px] block truncate text-[#A3A3A3]" title={user?.email || 'Not signed in'}>
+              {user?.email || 'StudyOS Private'}
+            </span>
+          </div>
+          {user && (
+            <button
+              onClick={() => signOut()}
+              title="Sign out of StudyOS"
+              className="hover:text-[#E06C75] text-[#707070] p-1.5 rounded hover:bg-[#202020] transition-colors shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </aside>
     </>

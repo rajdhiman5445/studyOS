@@ -9,6 +9,7 @@ import { Header } from '../layout/Header';
 import { useStudyOS } from '../../lib/storage';
 import { confidenceConfig, getSubjectById, getTodayDateString, formatDateLabel } from '../../lib/utils';
 import { SubjectBadge } from '../common/SubjectBadge';
+import { AuthGuard } from '../auth/AuthGuard';
 import type { ConfidenceLevel, Topic } from '../../types';
 
 export const RevisionView: React.FC = () => {
@@ -61,7 +62,8 @@ export const RevisionView: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-8">
+    <AuthGuard>
+      <div className="space-y-8">
       <Header
         title="Revision & Mastery"
         subtitle="Track subject comprehension and spaced review intervals"
@@ -310,5 +312,6 @@ export const RevisionView: React.FC = () => {
         </div>
       )}
     </div>
-  );
+  </AuthGuard>
+);
 };

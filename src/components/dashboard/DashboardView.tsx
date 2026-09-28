@@ -6,12 +6,14 @@ import { RevisionDue } from './RevisionDue';
 import { StudyTimeSummary } from './StudyTimeSummary';
 import { RecentNotes } from './RecentNotes';
 import { QuickCaptureModal } from './QuickCaptureModal';
+import { AuthGuard } from '../auth/AuthGuard';
 
 export const DashboardView: React.FC = () => {
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
 
   return (
-    <div className="space-y-6 sm:space-y-8">
+    <AuthGuard>
+      <div className="space-y-6 sm:space-y-8">
       <Header
         title="Dashboard"
         subtitle="Master of Science in Robotics Engineering • Active Workspace"
@@ -55,5 +57,6 @@ export const DashboardView: React.FC = () => {
         onClose={() => setQuickCaptureOpen(false)}
       />
     </div>
-  );
+  </AuthGuard>
+);
 };

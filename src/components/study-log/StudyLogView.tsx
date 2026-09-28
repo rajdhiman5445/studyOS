@@ -24,6 +24,7 @@ import {
   formatDateLabel 
 } from '../../lib/utils';
 import { SubjectBadge } from '../common/SubjectBadge';
+import { AuthGuard } from '../auth/AuthGuard';
 import {
   getTodayDateString,
   getCurrentMonthString,
@@ -284,7 +285,7 @@ export const StudyLogView: React.FC = () => {
       updateStudySession(updated);
     } else {
       const newSession: StudySession = {
-        id: `sess-${Date.now()}`,
+        id: crypto.randomUUID(),
         date: formDate,
         startTime: durationMode === 'times' ? formStartTime : undefined,
         endTime: durationMode === 'times' ? formEndTime : undefined,
@@ -332,7 +333,8 @@ export const StudyLogView: React.FC = () => {
   const availableTasks = data.tasks.filter((t) => t.subjectId === formSubjectId);
 
   return (
-    <div className="space-y-8">
+    <AuthGuard>
+      <div className="space-y-8">
       {/* Page Header */}
       <Header
         title="Study Log"
@@ -1157,5 +1159,6 @@ export const StudyLogView: React.FC = () => {
         </div>
       )}
     </div>
-  );
+  </AuthGuard>
+);
 };

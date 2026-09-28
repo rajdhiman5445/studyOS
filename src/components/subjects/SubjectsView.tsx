@@ -14,6 +14,7 @@ import { Header } from '../layout/Header';
 import { useStudyOS } from '../../lib/storage';
 import { confidenceConfig, getTodayDateString, PRESET_SUBJECT_COLORS } from '../../lib/utils';
 import { SubjectBadge } from '../common/SubjectBadge';
+import { AuthGuard } from '../auth/AuthGuard';
 import type { Subject, Semester, Topic, ConfidenceLevel } from '../../types';
 
 
@@ -104,7 +105,7 @@ export const SubjectsView: React.FC = () => {
       });
     } else {
       const newSubject: Subject = {
-        id: `sub-${Date.now()}`,
+        id: crypto.randomUUID(),
         semesterId: currentViewingSemester.id,
         name: subName.trim(),
         code: subCode.trim(),
@@ -156,7 +157,7 @@ export const SubjectsView: React.FC = () => {
       });
     } else {
       const newSemester: Semester = {
-        id: `sem-${Date.now()}`,
+        id: crypto.randomUUID(),
         name: semName.trim(),
         academicYear: semYear.trim(),
         startDate: semStart,
@@ -184,7 +185,7 @@ export const SubjectsView: React.FC = () => {
     if (!topicTitle.trim() || !targetSubjectForTopic) return;
 
     const newTopic: Topic = {
-      id: `top-${Date.now()}`,
+      id: crypto.randomUUID(),
       subjectId: targetSubjectForTopic,
       title: topicTitle.trim(),
       confidence: topicConfidence,
@@ -197,7 +198,8 @@ export const SubjectsView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8">
+    <AuthGuard>
+      <div className="space-y-8">
       <Header
         title="Academic Structure"
         subtitle="Dynamic semester frameworks, syllabus courses, and topic hierarchies"
@@ -747,5 +749,6 @@ export const SubjectsView: React.FC = () => {
         </div>
       )}
     </div>
-  );
+  </AuthGuard>
+);
 };

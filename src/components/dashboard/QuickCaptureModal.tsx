@@ -54,7 +54,7 @@ export const QuickCaptureModal: React.FC<QuickCaptureModalProps> = ({ isOpen, on
     if (!taskTitle.trim() || !activeSemester) return;
 
     const newTask: Task = {
-      id: `task-${Date.now()}`,
+      id: crypto.randomUUID(),
       semesterId: activeSemester.id,
       subjectId: subjectId || (activeSubjects[0]?.id ?? ''),
       title: taskTitle.trim(),
@@ -79,7 +79,7 @@ export const QuickCaptureModal: React.FC<QuickCaptureModalProps> = ({ isOpen, on
     if (!noteContent.trim()) return;
 
     addQuickNote({
-      id: `note-${Date.now()}`,
+      id: crypto.randomUUID(),
       content: noteContent.trim(),
       subjectId: noteSubjectId || undefined,
       createdAt: new Date().toISOString(),
